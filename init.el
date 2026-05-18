@@ -236,23 +236,8 @@
 	    (setq window-min-width 10
 		  window-min-height 4)))
 
-(defun my/setup-dev-layout ()
-  "Four-pane C/C++ coding layout:
-   ┌────────┬──────────────┬──────────────────┐
-   │        │ reference A  │                  │
-   │  Tree  │  (top-mid)   │  current buffer  │
-   │  macs  ├──────────────┤  (right pane)    │
-   │        │ reference B  │                  │
-   └────────┴──────────────┴──────────────────┘
-   Bind: C-c w l   Navigate: Shift-arrow"
-  (interactive)
-  (delete-other-windows)
-  (let* ((main-window (selected-window))
-	 (right-pane (split-window-right)))
-    (select-window main-window)
-    (split-window-below)
-    (select-window right-pane)
-      (treemacs)))
+;; Window management functions moved to PHASE 3 section below
+;; The original my/setup-dev-layout with treemacs is replaced by the new version
 
 (defun my/setup-org-layout ()
   "Two-pane org layout: note (left 65%) + backlinks (right 35%).
@@ -266,7 +251,8 @@
       (message "org-roam not active yet — enable Phase 4 in init.el"))
     (select-window (previous-window))))
 
-(global-set-key (kbd "C-c w l") #'my/setup-dev-layout)
+;; Note: C-c w l keybinding for my/setup-dev-layout is defined in PHASE 3 section
+
 (global-set-key (kbd "C-c w o") #'my/setup-org-layout)
 (global-set-key (kbd "C-c w u") #'winner-undo)
 (global-set-key (kbd "C-c w r") #'winner-redo)
@@ -293,17 +279,9 @@
   (easysession-load))
 
 ;; auto-open layout when in emacsclient
-(defun my/auto-apply-client-layout (frame)
-  "Applies 4-pane layout automatically when emacsclient frame opens."
-  (with-selected-frame frame
-    ;; Needs a delay so the terminal frame can render
-    (run-with-idle-timer 0.1 nil (lambda ()
-				     (my/setup-dev-layout)))))
-
-;; trigger when running daemon mode
-(if (daemonp)
-    (add-hook 'after-make-frame-functions #'my/auto-apply-client-layout)
-  (add-hook 'emacs-startup-hook #'my/setup-dev-layout))
+;; REMOVED: Old daemon-based layout logic replaced by projectile-after-switch-project-hook
+;; (defun my/auto-apply-client-layout (frame) ...)
+;; (if (daemonp) ...)
 
 ;; ============================================================
 ;; Treemacs
@@ -457,6 +435,121 @@
         (magit-project-status        "Magit"      ?g)
         (project-eshell              "Eshell"     ?e)
         (cmake-integration-transient "CMake"      ?m)))
+
+;; ============================================================
+;; PROJECTILE CONFIGURATION (PHASE 1)
+;; ============================================================
+(use-package projectile
+  :diminish projectile-mode
+  :config
+  (projectile-mode +1)
+  ;; Set .git as project root marker
+  (setq projectile-project-root-files-bottom-up '(".git"))
+  ;; Optional: set project search path
+  (setq projectile-project-search-path '("~/projects/" "/workspace/projects/"))
+  ;; Ensure compatibility with project.el - both can coexist
+  :bind (("C-c p" . projectile-command-map)))
+
+;; =============================================================================
+;; LOGGING HELPER (PHASE 6)
+;; =============================================================================
+
+(defun my/log (msg &rest args)
+  "Log a message with [proj-state] prefix."
+  (apply #'message (concat "[proj-state] " msg) args))
+
+;; =============================================================================
+;; PROJECT ROOT HELPER (PHASE 4)
+;; =============================================================================
+
+(defun my/project-root ()
+  "Get the current project root using Projectile."
+  (projectile-project-root))
+
+;; =============================================================================
+;; LAYOUT FUNCTIONS (PHASE 3)
+;; =============================================================================
+
+(defun my/setup-dev-layout ()
+  "Setup development/coding layout."
+  (my/log "Setting up dev layout")
+  (delete-other-windows)
+  (set-frame-parameter nil 'my-layout-type 'coding)
+  (my/log "Dev layout complete"))
+
+(defun my/setup-writing-layout ()
+  "Setup writing/Org-roam layout."
+  (my/log "Setting up writing layout")
+  (delete-other-windows)
+  (split-window-right)
+  (other-window 1)
+  (when (fboundp 'org-roam-buffer-toggle)
+    (org-roam-buffer-toggle))
+  (other-window -1)
+  (org-mode)
+  (set-frame-parameter nil 'my-layout-type 'writing)
+  (my/log "Writing layout complete"))
+
+(defun my/apply-project-type ()
+  "Dispatcher to apply project-type specific layout."
+  (when (boundp 'project-type)
+    (my/log "Applying project type: %s" project-type)
+    (pcase project-type
+      ('coding (my/setup-dev-layout))
+      ('writing (my/setup-writing-layout))
+      (_ (my/log "Unknown project type: %s" project-type)))))
+
+;; =============================================================================
+;; PROJECT STATE PERSISTENCE (PHASE 4)
+;; =============================================================================
+
+(defun my/save-project-state ()
+  "Save current project state to .project-state.el."
+  (let* ((root (my/project-root))
+         (file (when root (expand-file-name ".project-state.el" root))))
+    (when (and root file)
+      (let ((state `(:layout ,(frame-parameter nil 'my-layout-type)
+                     :buffers ,(mapcar #'buffer-file-name (projectile-project-buffers))
+                     :focus-file ,(buffer-file-name (window-buffer (selected-window))))))
+        (with-temp-file file
+          (prin1 state (current-buffer)))
+        (my/log "Saved project state for %s" root)))))
+
+(defun my/restore-project-state ()
+  "Restore project state from .project-state.el."
+  (let* ((root (my/project-root))
+         (file (when root (expand-file-name ".project-state.el" root))))
+    (when (and root file (file-exists-p file))
+      (my/log "Restoring project state for %s" root)
+      (let ((state (with-temp-buffer
+                     (insert-file-contents file)
+                     (read (current-buffer)))))
+        ;; Restore buffers
+        (dolist (f (plist-get state :buffers))
+          (when (and f (file-exists-p f))
+            (find-file-noselect f)))
+        ;; Apply layout based on saved state
+        (pcase (plist-get state :layout)
+          ('coding (my/setup-dev-layout))
+          ('writing (my/setup-writing-layout))
+          (_ (my/log "Unknown saved layout: %s" (plist-get state :layout))))
+        ;; Focus on previously active file
+        (let ((focus (plist-get state :focus-file)))
+          (when (and focus (file-exists-p focus))
+            (find-file focus)
+            (my/log "Focused on %s" focus)))))))
+
+;; =============================================================================
+;; HOOKS FOR AUTOMATIC BEHAVIOR (PHASE 5)
+;; =============================================================================
+
+;; Add hooks for automatic project state management
+(add-hook 'projectile-after-switch-project-hook #'my/restore-project-state)
+(add-hook 'kill-emacs-hook #'my/save-project-state)
+(add-hook 'find-file-hook #'my/apply-project-type)
+
+;; Enable dir-locals support
+(enable-dir-local-variables)
 
 ;; ============================================================
 ;; Compilation (fallback for non-CMake builds)
