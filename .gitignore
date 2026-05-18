@@ -1,0 +1,48 @@
+```
+# Emacs-specific files
+*.elc
+auto-save-list/
+.desktop
+.projectile
+.dir-locals.el
+.project-state.el
+
+# Backup and autosave files
+*~
+\#*\#
+.\#*
+*.autosave
+*.bak
+*.bkp
+
+# Temporary files
+*.tmp
+/tmp/
+temp/
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Dependencies and build artifacts
+elpa/
+straight/
+.nox/
+.venv/
+venv/
+node_modules/
+dist/
+build/
+target/
+.gradle/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+```
